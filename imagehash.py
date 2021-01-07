@@ -31,7 +31,7 @@ Rotation by 26: 21 Hamming difference
 
 from __future__ import (absolute_import, division, print_function)
 
-from PIL import Image, ImageFilter
+from PIL import Image
 import numpy
 #import scipy.fftpack
 #import pywt
@@ -555,72 +555,3 @@ def _find_all_segments(pixels, segment_threshold, min_segment_size):
 			unassigned_pixels[pix] = False
 
 	return segments
-
-
-def crop_resistant_hash(
-		image,
-		hash_func=None,
-		limit_segments=None,
-		segment_threshold=128,
-		min_segment_size=500,
-		segmentation_image_size=300
-	):
-	"""
-	Creates a CropResistantHash object, by the algorithm described in the paper "Efficient Cropping-Resistant Robust
-	Image Hashing". DOI 10.1109/ARES.2014.85
-	This algorithm partitions the image into bright and dark segments, using a watershed-like algorithm, and then does
-	an image hash on each segment. This makes the image much more resistant to cropping than other algorithms, with
-	the paper claiming resistance to up to 50% cropping, while most other algorithms stop at about 5% cropping.
-
-	Note: Slightly different segmentations are produced when using pillow version 6 vs. >=7, due to a change in
-	rounding in the greyscale conversion. This leads to a slightly different result.
-	:param image: The image to hash
-	:param hash_func: The hashing function to use
-	:param limit_segments: If you have storage requirements, you can limit to hashing only the M largest segments
-	:param segment_threshold: Brightness threshold between hills and valleys. This should be static, putting it between
-	peak and trough dynamically breaks the matching
-	:param min_segment_size: Minimum number of pixels for a hashable segment
-	:param segmentation_image_size: Size which the image is resized to before segmentation
-	"""
-	if hash_func is None:
-		hash_func = dhash
-
-	orig_image = image.copy()
-	# Convert to gray scale and resize
-	image = image.convert("L").resize((segmentation_image_size, segmentation_image_size), Image.ANTIALIAS)
-	# Add filters
-	image = image.filter(ImageFilter.GaussianBlur()).filter(ImageFilter.MedianFilter())
-	pixels = numpy.array(image).astype(numpy.float32)
-
-	segments = _find_all_segments(pixels, segment_threshold, min_segment_size)
-
-	# If there are no segments, have 1 segment including the whole image
-	if not segments:
-		full_image_segment = {(0, 0), (segmentation_image_size-1, segmentation_image_size-1)}
-		segments.append(full_image_segment)
-
-	# If segment limit is set, discard the smaller segments
-	if limit_segments:
-		segments = sorted(segments, key=lambda s: len(s), reverse=True)[:limit_segments]
-
-	# Create bounding box for each segment
-	hashes = []
-	for segment in segments:
-		orig_w, orig_h = orig_image.size
-		scale_w = float(orig_w) / segmentation_image_size
-		scale_h = float(orig_h) / segmentation_image_size
-		min_y = min(coord[0] for coord in segment) * scale_h
-		min_x = min(coord[1] for coord in segment) * scale_w
-		max_y = (max(coord[0] for coord in segment)+1) * scale_h
-		max_x = (max(coord[1] for coord in segment)+1) * scale_w
-		# Compute robust hash for each bounding box
-		bounding_box = orig_image.crop((min_x, min_y, max_x, max_y))
-		hashes.append(hash_func(bounding_box))
-		# Show bounding box
-		# im_segment = image.copy()
-		# for pix in segment:
-		# 	im_segment.putpixel(pix[::-1], 255)
-		# im_segment.show()
-		# bounding_box.show()
-
-	return ImageMultiHash(hashes)
